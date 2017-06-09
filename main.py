@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 import telepot
 import shelve
 import json
@@ -198,7 +201,7 @@ settings = easydict()
 
 def main():
     global bot, authorized_users, alerting_on, mvg_auth_key, verbose, home_location
-    config_filename = 'config.json'
+    config_filename = 'config/config.json'
     try:
         with open(config_filename, 'r') as config_file:
             config = json.load(config_file)
