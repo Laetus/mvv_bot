@@ -52,11 +52,48 @@ def get_stations_close_to(location) :
     except ValueError as e:
         return ""
 
-def getNameFromLocation(x) : 
+def getNameFromStation(x) : 
+
+    products = {
+        's' : "S", #S-Bahn
+        'u' : "U", #U-Bahn
+        't' : "T", #Tram
+        'b' : ""
+    }
+
+    res = ''
+
+    for product in x.get("products"): 
+        if product in products:
+            res = res + products.get(product)
+    
     try:
-        return x.get("name")
+        return x.get("name") + ' {} ({}m)'.format(res ,x.get("distance"))
     except ValueError:
         return ""
+
+def getLinesFromStation(x):
+
+    res =  ''
+
+    linesMap = {
+        "tram" : "T",
+        "nachttram" : "NT",
+        "sbahn" : "S",
+        "ubahn" : "U",
+        "bus" : "",
+        "nachtbus" : "N",
+        "otherlines" : "X"
+    }
+
+    delimiter = ", "
+
+    for lines in x.get("lines"):
+        if lines in linesMap:
+            for l in x.get("lines").get(lines) : 
+                res = res + linesMap.get(lines) + l + delimiter
+    
+    return res[0:len(res)-len(delimiter)]
 
 def projectDeparture(departure):
     departure.pop("departureId", None)
@@ -67,7 +104,7 @@ def projectDeparture(departure):
     return departure
 
 
-def get_Departures_From_Location(location_id) :
+def get_Departures_From_Station(station_id) :
     global verbose
      
     conn = http.client.HTTPSConnection("www.mvg.de")
@@ -77,23 +114,27 @@ def get_Departures_From_Location(location_id) :
         'cache-control': "no-cache",
         }
 
-    conn.request("GET", '/fahrinfo/api/departure/{}'.format(location_id), headers=headers)
+    conn.request("GET", '/fahrinfo/api/departure/{}'.format(station_id), headers=headers)
 
     res = conn.getresponse()
     result = json.loads(res.read().decode("utf-8"))
-    
+
     if verbose:
         print(result)
 
-    return list(map(projectDeparture, result.get("departures")))
+    departures = result.get("departures")
+
+    if len(departures) > 10:
+        departures = departures[0:10]
+
+    return list(map(projectDeparture, departures))
 
 
-  
 def parseDepartures(departures) :
     result = "**Abfahrt**  **Linie**  **Ziel**\n" 
     for departure in departures :
-        depTime = time.strftime("%m. %b. %H:%M:%S" , time.localtime(departure.get("departureTime")/1e3))
-        result += '{}  |  {}    {} \n'.format(depTime, departure.get("product").capitalize()+departure.get("label") ,departure.get("destination"))
+        depTime = time.strftime("%H:%M" , time.localtime(departure.get("departureTime")/1e3))
+        result += '{}  {}   {}\n'.format(depTime, departure.get("product").capitalize()+departure.get("label") ,departure.get("destination"))
 
     return result
 
@@ -145,7 +186,7 @@ class ChatUser(telepot.helper.ChatHandler):
                 pprint(msg)
             msg_text = msg['text']
             if msg_text.startswith('/start'):
-                self.sender.sendMessage('*Hallo, ich bin dein Heimüberwachungs-Bot!* [' + APPVERSION + ']' +
+                self.sender.sendMessage('*Hallo, ich bin der MVV Bot* [' + APPVERSION + ']' +
                                         chr(0x1F916) + "\n\n"
                                         'Ich benachrichtige dich, wenn deine Webcams Bewegungen '
                                         'und laute Geräusche erkannt haben '
@@ -182,15 +223,15 @@ class ChatUser(telepot.helper.ChatHandler):
         global verbose
         if verbose:
             print("Calculating departures")
-            self.sender.sendMessage('Suche Haltestellen in der Naehe von:\nLon:\t {}\nLat:\t {}'.format(location.get('longitude'), location.get('latitude')))
+            self.sender.sendMessage('Suche Haltestellen in der Nähe von:\nLon:\t {}\nLat:\t {}'.format(location.get('longitude'), location.get('latitude')))
         station_list = get_stations_close_to(location)
         if verbose:
             self.sender.sendMessage('Abfahrten fuer Haltestellen abfragen: {}'.format(
-                str(list(map(getNameFromLocation, station_list))).replace("[","").replace("]","").replace("'","")
+                str(list(map(getNameFromStation, station_list))).replace("[","").replace("]","").replace("'","")
             ))
         for station in station_list :
-            departures = get_Departures_From_Location(station_list[0].get("id"))
-            foo = '*' + getNameFromLocation(station) +'* \n\n' + parseDepartures(departures)+ '\n\n\n'
+            departures = get_Departures_From_Station(station_list[0].get("id"))
+            foo = '*' + getNameFromStation(station) +'*\n' +getLinesFromStation(station) + '\n\n' + parseDepartures(departures)+ '\n\n\n'
             self.sender.sendMessage(foo , parse_mode='Markdown')
 
 authorized_users = None
