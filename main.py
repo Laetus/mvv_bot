@@ -16,11 +16,9 @@ from telepot.delegate import pave_event_space, include_callback_query_chat_id
 APPNAME = "mvv_bot"
 APPVERSION = "1.0.0"
 MVG_AUTH_KEY = None
-AUTHORIZED_USERS = None
 BOT = None
 TELEGRAM_BOT_TOKEN = None
 VERBOSE = False
-HOME_LOCATION = None
 USERS = None
 
 
@@ -285,26 +283,11 @@ class ChatUser(telepot.helper.ChatHandler):
 
 def main():
     """ runs the bot """
-    global BOT, AUTHORIZED_USERS, MVG_AUTH_KEY, VERBOSE, HOME_LOCATION, TELEGRAM_BOT_TOKEN, USERS
-    try:
-        config_filename = "config/config.json"
-        with open(config_filename, 'r') as config_file:
-            config = json.load(config_file)
-    except FileNotFoundError:
-        print('Error: config file "{}" not found:'.format(config_filename))
-        return
-    except ValueError as error:
-        print('Error: invalid config fie "{}": {}'.format(config_filename, error))
-        return
+    global BOT, MVG_AUTH_KEY, VERBOSE, TELEGRAM_BOT_TOKEN, USERS
 
     TELEGRAM_BOT_TOKEN = str(os.environ['TELEGRAM_BOT_TOKEN'])
     if not TELEGRAM_BOT_TOKEN:
         print("Error: config file does not contain a 'telegram_bot_token'")
-        return
-
-    AUTHORIZED_USERS = config.get('authorized_users')
-    if not isinstance(AUTHORIZED_USERS, list) or len(AUTHORIZED_USERS) <= 0:
-        print('Error: config file doesn’t contain an `authorized_users` list')
         return
 
     MVG_AUTH_KEY = str(os.environ['MVG_AUTH_KEY'])
@@ -316,9 +299,8 @@ def main():
     database = client['mvv-bot']
     USERS = database['users']
 
-    timeout_secs = config.get('timeout_secs', 10 * 60)
+    timeout_secs = int(os.environ['TIMEOUT'])
     VERBOSE = str(os.environ['VERBOSE']) == 'true'
-    HOME_LOCATION = config.get('home_location')
     # image_folder = config.get('image_folder', '/home/ftp-upload')
 
     BOT = telepot.DelegatorBot(TELEGRAM_BOT_TOKEN, [
