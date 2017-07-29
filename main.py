@@ -147,27 +147,6 @@ def parse_departures(departures):
     return result
 
 
-def get_user_from_db(message):
-    content_type, chat_type, chat_id = telepot.glance(message)
-    user = message.get('from')
-    cursor = USERS.find({"id": user.get('id')})
-
-    document = "error"
-    if VERBOSE:
-        print(str(user))
-
-    if cursor.count() < 1:
-        print('user must be created')
-        user['lastContact'] = message.get("date")
-        document = USERS.insert_one(user)
-    else:
-        if cursor.count() > 1:
-            print('User exists twice')
-        document = cursor.next()
-
-    return document
-
-
 class ChatUser(telepot.helper.ChatHandler):
     """ models a chat user """
 
@@ -195,12 +174,34 @@ class ChatUser(telepot.helper.ChatHandler):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[kbd])
         self.sender.sendMessage('Wähle eine Aktion:', reply_markup=keyboard)
 
+    def get_user_from_db(self, message):
+        content_type, chat_type, chat_id = telepot.glance(message)
+        user = message.get('from')
+        cursor = USERS.find({"id": user.get('id')})
+
+        document = "error"
+        if VERBOSE:
+            print(str(user))
+
+        if cursor.count() < 1:
+            print('user must be created')
+            user['lastContact'] = message.get("date")
+            document = USERS.insert_one(user)
+            self.sender.sendMessage(
+                'Welcome {} \nType /help and I will send you more information'.format(user.get('first_name')))
+            return self.get_user_from_db(message)
+        else:
+            if cursor.count() > 1:
+                print('User exists twice')
+            document = cursor.next()
+
+        return document
+
     def on_chat_message(self, msg):
         """ processes a chat message"""
-        global HOME_LOCATION
         content_type, chat_type, chat_id = telepot.glance(msg)
 
-        user = get_user_from_db(msg)
+        user = self.get_user_from_db(msg)
 
         try:
             user['msg_count'] = int(user.get('msg_count')) + 1
@@ -220,7 +221,12 @@ class ChatUser(telepot.helper.ChatHandler):
                                         parse_mode='Markdown')
                 self.send_main_menu()
             elif msg_text.startswith('/dep'):
-                self.get_departures(user['home'])
+                if 'home' in user.keys():
+                    self.get_departures(user['home'])
+                else:
+                    self.sender.sendMessage(
+                        'Home location is not set, you have to set your home location first. Send a message with /sethome to start.')
+
             elif msg_text.startswith('/sethome'):
                 self.sender.sendMessage(
                     'If the next message is a location it is set as your new home.')
@@ -260,25 +266,29 @@ class ChatUser(telepot.helper.ChatHandler):
 
     def get_departures(self, location):
         """sends the departures close to a given location to the user"""
-        global VERBOSE
-        if VERBOSE:
-            print("Calculating departures")
+        try:
+            global VERBOSE
+            if VERBOSE:
+                print("Calculating departures")
+                self.sender.sendMessage(
+                    'Suche Haltestellen in der Nähe von:\nLon:\t {}\nLat:\t {}'
+                    .format(location.get('longitude'), location.get('latitude')))
+            station_list = get_stations_close_to(location)
+            if VERBOSE:
+                self.sender.sendMessage('Abfahrten fuer Haltestellen abfragen: {}'.format(
+                    str(list(map(get_name_from_station, station_list)))
+                    .replace("[", "")
+                    .replace("]", "")
+                    .replace("'", "")
+                ))
+            for station in station_list:
+                departures = get_departures_from_station(station.get("id"))
+                message = '*' + get_name_from_station(station) + '*\n' + get_lines_from_station(
+                    station) + '\n\n' + parse_departures(departures) + '\n\n\n'
+                self.sender.sendMessage(message, parse_mode='Markdown')
+        except KeyError:
             self.sender.sendMessage(
-                'Suche Haltestellen in der Nähe von:\nLon:\t {}\nLat:\t {}'
-                .format(location.get('longitude'), location.get('latitude')))
-        station_list = get_stations_close_to(location)
-        if VERBOSE:
-            self.sender.sendMessage('Abfahrten fuer Haltestellen abfragen: {}'.format(
-                str(list(map(get_name_from_station, station_list)))
-                .replace("[", "")
-                .replace("]", "")
-                .replace("'", "")
-            ))
-        for station in station_list:
-            departures = get_departures_from_station(station.get("id"))
-            message = '*' + get_name_from_station(station) + '*\n' + get_lines_from_station(
-                station) + '\n\n' + parse_departures(departures) + '\n\n\n'
-            self.sender.sendMessage(message, parse_mode='Markdown')
+                'Location information is invalid. Please try again later.')
 
 
 def main():
