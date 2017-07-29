@@ -7,9 +7,10 @@ import time
 import http.client
 from pprint import pprint
 
+from pymongo import MongoClient
 import telepot
 from telepot.namedtuple import InlineKeyboardMarkup, InlineKeyboardButton
-from telepot.delegate import per_chat_id_in, per_chat_id, create_open
+from telepot.delegate import per_chat_id, create_open
 from telepot.delegate import pave_event_space, include_callback_query_chat_id
 
 APPNAME = "mvv_bot"
@@ -20,6 +21,7 @@ BOT = None
 TELEGRAM_BOT_TOKEN = None
 VERBOSE = False
 HOME_LOCATION = None
+USERS = None
 
 def get_mvg_auth_key():
     """ returns the MVG api key"""
@@ -80,11 +82,11 @@ def get_lines_from_station(station):
 
     lines_shortcut_map = {
         "tram" : "T",
-        "nachttram" : "NT",
+        "nachttram" : "Nt",
         "sbahn" : "S",
         "ubahn" : "U",
         "bus" : "",
-        "nachtbus" : "N",
+        "nachtbus" : "Nb",
         "otherlines" : "X"
     }
 
@@ -119,10 +121,7 @@ def get_departures_from_station(station_id):
 
     res = conn.getresponse()
     result = json.loads(res.read().decode("utf-8"))
-
-    if VERBOSE:
-        print(result)
-
+    
     departures = result.get("departures")
 
     if len(departures) > 10:
@@ -141,19 +140,31 @@ def parse_departures(departures):
             departure.get("label"), departure.get("destination"))
 
     return result
-"""
-class Easydict(dict):
-    
-    def __missing__(self, key):
-        self[key] = Easydict()
-        return self[key]
-"""
+
+def get_user_from_db(message):
+    content_type, chat_type, chat_id = telepot.glance(message)
+    user = message.get('from')
+    cursor = USERS.find({"id": user.get('id')})
+
+    document = "error"
+    if VERBOSE:
+        print(str(user))
+
+    if cursor.count() < 1:
+        print('user must be created')
+        user['lastContact'] = message.get("date")
+        document = USERS.insert_one(user)
+    else:
+        if cursor.count() > 1:
+            print('User exists twice')
+        document = cursor.next()
+
+    return document
+
+
 class ChatUser(telepot.helper.ChatHandler):
     """ models a chat user """
-    IdleMessages = ['tüdelü …', 'Mir ist langweilig.', 'Chill dein Life! Alles cool hier.',
-                    'Nix los hier …', 'Hallo-o!!!', 'Alles cool, Digga.',
-                    'Mach du dein Ding. Ich mach hier meins.', 'Alles voll secure in da house.']
-
+  
     def __init__(self, *args, **kwargs):
         global VERBOSE
         super(ChatUser, self).__init__(*args, **kwargs)
@@ -167,8 +178,7 @@ class ChatUser(telepot.helper.ChatHandler):
 
     def on_close(self, msg):
         """ handle close event """
-        if self.verbose:
-            print('on_close() called. {}'.format(msg))
+        print('on_close() called. {}'.format(msg))
         return True
 
     def send_main_menu(self):
@@ -183,6 +193,14 @@ class ChatUser(telepot.helper.ChatHandler):
         """ processes a chat message"""
         global HOME_LOCATION
         content_type, chat_type, chat_id = telepot.glance(msg)
+
+        user = get_user_from_db(msg)
+
+        try:
+            user['msg_count'] = int(user.get('msg_count')) + 1
+        except TypeError:
+            user['msg_count'] = 1
+
         if content_type == 'text':
             if self.verbose:
                 pprint(msg)
@@ -196,7 +214,10 @@ class ChatUser(telepot.helper.ChatHandler):
                                         parse_mode='Markdown')
                 self.send_main_menu()
             elif msg_text.startswith('/dep'):
-                self.get_departures(HOME_LOCATION)
+                self.get_departures(user['home'])
+            elif msg_text.startswith('/sethome'):
+                self.sender.sendMessage('If the next message is a location it is set as your new home.')
+                user['state'] = {'setHome': True, 'msg_number': int(user['msg_count'])}
             elif msg_text.startswith('/help'):
                 self.sender.sendMessage("Verfügbare Kommandos:\n\n"
                                         "/help diese Nachricht anzeigen\n"
@@ -213,12 +234,20 @@ class ChatUser(telepot.helper.ChatHandler):
         elif content_type == 'location':
             if self.verbose:
                 pprint(msg)
-            location = msg.get('location')
+
+            if user['state']['setHome']:
+                location = msg.get('location')
+                user['home'] = location
+                user['state'] = {'setHome': False}
+                self.sender.sendMessage('Home location updated.')
+
             self.get_departures(location)
 
         else:
             self.sender.sendMessage(
                 'Dein "{}" ist im Nirwana gelandet ...'.format(content_type))
+                
+        USERS.replace_one({'_id' : user.get('_id')}, user)
 
 
     def get_departures(self, location):
@@ -238,13 +267,13 @@ class ChatUser(telepot.helper.ChatHandler):
                 .replace("'", "")
             ))
         for station in station_list:
-            departures = get_departures_from_station(station_list[0].get("id"))
+            departures = get_departures_from_station(station.get("id"))
             message = '*' + get_name_from_station(station) + '*\n' + get_lines_from_station(station) + '\n\n' + parse_departures(departures)+ '\n\n\n'
             self.sender.sendMessage(message, parse_mode='Markdown')
 
 def main():
     """ runs the bot """
-    global BOT, AUTHORIZED_USERS, MVG_AUTH_KEY, VERBOSE, HOME_LOCATION, TELEGRAM_BOT_TOKEN
+    global BOT, AUTHORIZED_USERS, MVG_AUTH_KEY, VERBOSE, HOME_LOCATION, TELEGRAM_BOT_TOKEN, USERS
     try:
         config_filename = "config/config.json"
         with open(config_filename, 'r') as config_file:
@@ -270,6 +299,10 @@ def main():
     if not MVG_AUTH_KEY:
         print('Error: config file doesn’t contain an `mvg_auth_key`')
         return
+
+    client = MongoClient(os.environ['DB_URI'])
+    database = client['mvv-bot']
+    USERS = database['users']
 
     timeout_secs = config.get('timeout_secs', 10*60)
     VERBOSE = str(os.environ['VERBOSE']) == 'true'
