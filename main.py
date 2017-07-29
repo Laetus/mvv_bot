@@ -6,7 +6,7 @@ import json
 import time
 import http.client
 from pprint import pprint
-
+import logging
 from pymongo import MongoClient
 import telepot
 from telepot.namedtuple import InlineKeyboardMarkup, InlineKeyboardButton
@@ -154,16 +154,15 @@ class ChatUser(telepot.helper.ChatHandler):
         global VERBOSE
         super(ChatUser, self).__init__(*args, **kwargs)
         self.timeout_secs = kwargs.get('timeout')
-        self.verbose = VERBOSE
 
     def open(self, initial_msg, seed):
         """ handle open event"""
-        print(str(seed))
+        logging.debug(str(seed))
         telepot.glance(initial_msg)
 
     def on_close(self, msg):
         """ handle close event """
-        print('on_close() called. {}'.format(msg))
+        logging.debug('on_close() called. %', msg)
         return True
 
     def send_main_menu(self):
@@ -180,11 +179,11 @@ class ChatUser(telepot.helper.ChatHandler):
         cursor = USERS.find({"id": user.get('id')})
 
         document = "error"
-        if VERBOSE:
-            print(str(user))
+
+        logging.info(str(user))
 
         if cursor.count() < 1:
-            print('user must be created')
+            logging.debug('user must be created')
             user['lastContact'] = message.get("date")
             document = USERS.insert_one(user)
             self.sender.sendMessage(
@@ -192,7 +191,7 @@ class ChatUser(telepot.helper.ChatHandler):
             return self.get_user_from_db(message)
         else:
             if cursor.count() > 1:
-                print('User exists twice')
+                logging.error('User exists twice')
             document = cursor.next()
 
         return document
@@ -209,8 +208,8 @@ class ChatUser(telepot.helper.ChatHandler):
             user['msg_count'] = 1
 
         if content_type == 'text':
-            if self.verbose:
-                pprint(msg)
+
+            logging.debug(msg)
             msg_text = msg['text']
             if msg_text.startswith('/start'):
                 self.sender.sendMessage('*Hallo, ich bin der MVV Bot* [' + APPVERSION + ']' +
@@ -247,11 +246,12 @@ class ChatUser(telepot.helper.ChatHandler):
                     'Ich bin nicht sehr gesprächig. Tippe /help für weitere Infos ein.')
 
         elif content_type == 'location':
-            if self.verbose:
-                pprint(msg)
 
-            if user['state']['setHome']:
-                location = msg.get('location')
+            logging.info(msg)
+
+            location = msg.get('location')
+
+            if 'state' in user.keys() and 'setHome' in user['state'].keys() and user['state']['setHome']:
                 user['home'] = location
                 user['state'] = {'setHome': False}
                 self.sender.sendMessage('Home location updated.')
@@ -267,20 +267,18 @@ class ChatUser(telepot.helper.ChatHandler):
     def get_departures(self, location):
         """sends the departures close to a given location to the user"""
         try:
-            global VERBOSE
-            if VERBOSE:
-                print("Calculating departures")
-                self.sender.sendMessage(
-                    'Suche Haltestellen in der Nähe von:\nLon:\t {}\nLat:\t {}'
-                    .format(location.get('longitude'), location.get('latitude')))
+            logging.info("Calculating departures")
+            self.sender.sendMessage(
+                'Suche Haltestellen in der Nähe von:\nLon:\t {}\nLat:\t {}'
+                .format(location.get('longitude'), location.get('latitude')))
             station_list = get_stations_close_to(location)
-            if VERBOSE:
-                self.sender.sendMessage('Abfahrten fuer Haltestellen abfragen: {}'.format(
-                    str(list(map(get_name_from_station, station_list)))
-                    .replace("[", "")
-                    .replace("]", "")
-                    .replace("'", "")
-                ))
+
+            self.sender.sendMessage('Abfahrten fuer Haltestellen abfragen: {}'.format(
+                str(list(map(get_name_from_station, station_list)))
+                .replace("[", "")
+                .replace("]", "")
+                .replace("'", "")
+            ))
             for station in station_list:
                 departures = get_departures_from_station(station.get("id"))
                 message = '*' + get_name_from_station(station) + '*\n' + get_lines_from_station(
@@ -294,15 +292,23 @@ class ChatUser(telepot.helper.ChatHandler):
 def main():
     """ runs the bot """
     global BOT, MVG_AUTH_KEY, VERBOSE, TELEGRAM_BOT_TOKEN, USERS
+    VERBOSE = str(os.environ['VERBOSE']) == 'true'
+    log_level = logging.ERROR
+    if VERBOSE:
+        log_level = logging.INFO
+
+    logging.basicConfig(filename='mvv-bot.log', level=log_level)
+    logging.debug('Started')
 
     TELEGRAM_BOT_TOKEN = str(os.environ['TELEGRAM_BOT_TOKEN'])
     if not TELEGRAM_BOT_TOKEN:
-        print("Error: config file does not contain a 'telegram_bot_token'")
+        logging.fatal(
+            "Error: config file does not contain a 'telegram_bot_token'")
         return
 
     MVG_AUTH_KEY = str(os.environ['MVG_AUTH_KEY'])
     if not MVG_AUTH_KEY:
-        print('Error: config file doesn’t contain an `mvg_auth_key`')
+        logging.fatal('Error: config file doesn’t contain an `mvg_auth_key`')
         return
 
     client = MongoClient(os.environ['DB_URI'])
@@ -310,7 +316,7 @@ def main():
     USERS = database['users']
 
     timeout_secs = int(os.environ['TIMEOUT'])
-    VERBOSE = str(os.environ['VERBOSE']) == 'true'
+
     # image_folder = config.get('image_folder', '/home/ftp-upload')
 
     BOT = telepot.DelegatorBot(TELEGRAM_BOT_TOKEN, [
@@ -320,14 +326,13 @@ def main():
             ChatUser,
             timeout=timeout_secs)])
 
-    if VERBOSE:
-        print('Monitoring ...')
+    logging.debug('Monitoring ...')
     try:
         BOT.message_loop(run_forever='Bot listening ...')
     except KeyboardInterrupt:
         pass
-    if VERBOSE:
-        print('Exiting ...')
+
+    logging.debug('Exiting ...')
 
 
 if __name__ == '__main__':
